@@ -1,0 +1,99 @@
+version: "3.8"
+
+services:
+  frontend:
+    image: frontend:latest
+    network_mode: "host"
+    environment:
+      - PORT=8080
+      - RECOMMENDATION_SERVICE_ADDR=localhost:7777
+      - PRODUCT_CATALOG_SERVICE_ADDR=localhost:3550
+      - CART_SERVICE_ADDR=localhost:8888
+      - CHECKOUT_SERVICE_ADDR=localhost:9898
+      - SHIPPING_SERVICE_ADDR=localhost:50052
+      - PAYMENT_SERVICE_ADDR=localhost:50051
+      - CURRENCY_SERVICE_ADDR=localhost:7000
+      - EMAIL_SERVICE_ADDR=localhost:9090
+      - AD_SERVICE_ADDR=localhost:9555
+      - ENV_PLATFORM=aws
+      - SHOPPING_ASSISTANT_SERVICE_ADDR=localhost:7070
+
+  redis-server:
+    image: redis:alpine
+    container_name: redis-server
+    network_mode: "host"
+    ports:
+      - "6379:6379"
+
+  adservice:
+    image: adservice:latest
+    network_mode: "host"
+    environment:
+      - PORT=9555
+
+  cartservice:
+    image: cartservice:latest
+    network_mode: "host"
+    environment:
+      - REDIS_ADDR=localhost:6379
+      - ASPNETCORE_URLS=http://localhost:8888
+
+  checkoutservice:
+    image: checkoutservice:latest
+    network_mode: "host"
+    environment:
+      - PORT=9898
+      - ENABLE_TRACING=0
+      - ENABLE_PROFILER=0
+      - SHIPPING_SERVICE_ADDR=localhost:50052
+      - PAYMENT_SERVICE_ADDR=localhost:50051
+      - PRODUCT_CATALOG_SERVICE_ADDR=localhost:3550
+      - CURRENCY_SERVICE_ADDR=localhost:7000
+      - CART_SERVICE_ADDR=localhost:8888
+      - EMAIL_SERVICE_ADDR=localhost:9090
+      - ENV_PLATFORM=aws
+
+  currencyservice:
+    image: currencyservice:latest
+    network_mode: "host"
+    environment:
+      - PORT=7000
+
+  emailservice:
+    image: emailservice:latest
+    network_mode: "host"
+    environment:
+      - PORT=9090
+      - SMTP_SERVER=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_USERNAME=haphanbaominh9674@gmail.com
+      - SMTP_PASSWORD=minh1292002
+      - EMAIL_FROM=haphanaominh9674@gmail.com
+      - DISABLE_PROFILER=1
+
+  paymentservice:
+    image: paymentservice:latest
+    network_mode: "host"
+    environment:
+      - PORT=50051
+
+  productcatalogservice:
+    image: productcatalogservice:latest
+    network_mode: "host"
+    environment:
+      - PORT=3550
+      - DISABLE_PROFILER=1
+
+  recommendationservice:
+    image: recommendationservice:latest
+    network_mode: "host"
+    environment:
+      - PORT=7777
+      - PRODUCT_CATALOG_SERVICE_ADDR=localhost:3550
+
+  shippingservice:
+    image: shippingservice:latest
+    network_mode: "host"
+    environment:
+      - PORT=50052
+      - DISABLE_PROFILER=1
