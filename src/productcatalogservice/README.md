@@ -1,38 +1,55 @@
 # productcatalogservice
 
-Run the following command to restore dependencies to `vendor/` directory:
+### Discription
 
-    go mod vendor
+- This is a simple product catalog service that provides a RESTful API to read product data from a DynamoDB table.
 
-## Dynamic catalog reloading / artificial delay
+### To run with local dynamoDB
 
-This service has a "dynamic catalog reloading" feature that is purposefully
-not well implemented. The goal of this feature is to allow you to modify the
-`products.json` file and have the changes be picked up without having to
-restart the service.
-
-However, this feature is bugged: the catalog is actually reloaded on each
-request, introducing a noticeable delay in the frontend. This delay will also
-show up in profiling tools: the `parseCatalog` function will take more than 80%
-of the CPU time.
-
-You can trigger this feature (and the delay) by sending a `USR1` signal and
-remove it (if needed) by sending a `USR2` signal:
+docker run -p 8000:8000 -d amazon/dynamodb-local -jar DynamoDBLocal.jar -inMemory -sharedDb
 
 ```
-# Trigger bug
-kubectl exec \
-    $(kubectl get pods -l app=productcatalogservice -o jsonpath='{.items[0].metadata.name}') \
-    -c server -- kill -USR1 1
-# Remove bug
-kubectl exec \
-    $(kubectl get pods -l app=productcatalogservice -o jsonpath='{.items[0].metadata.name}') \
-    -c server -- kill -USR2 1
+
 ```
 
-## Latency injection
+aws dynamodb create-table \
+ --table-name Products \
+ --attribute-definitions AttributeName=id,AttributeType=S \
+ --key-schema AttributeName=id,KeyType=HASH \
+ --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
+ --endpoint-url http://localhost:8000 \
+ --region us-east-1
 
-This service has an `EXTRA_LATENCY` environment variable. This will inject a sleep for the specified [time.Duration](https://golang.org/pkg/time/#ParseDuration) on every call to
-to the server.
+```
 
-For example, use `EXTRA_LATENCY="5.5s"` to sleep for 5.5 seconds on every request.
+```
+
+aws dynamodb list-tables --endpoint-url http://localhost:8000 --region us-west-2
+
+```
+
+```
+
+aws dynamodb put-item --table-name Products --item '{
+"id": {"S": "OLJCESPC7Z"},
+"name": {"S": "Sunglasses"},
+"description": {"S": "Add a modern touch to your outfits with these sleek aviator sunglasses."},
+"picture": {"S": "/static/img/products/sunglasses.jpg"},
+"priceUsd": {"M": {
+"currencyCode": {"S": "USD"},
+"units": {"N": "19"},
+"nanos": {"N": "990000000"}
+}},
+"categories": {"L": [{"S": "accessories"}]}
+}' --endpoint-url http://localhost:8000 --region us-east-1
+
+```
+
+```
+
+aws dynamodb scan --table-name Products --endpoint-url http://localhost:8000
+
+```
+
+```
+

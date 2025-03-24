@@ -10,10 +10,7 @@ using Microsoft.Extensions.Hosting;
 using cartservice.cartstore;
 using cartservice.services;
 using Microsoft.Extensions.Caching.StackExchangeRedis;
-<<<<<<< HEAD
-=======
 using dotenv.net;
->>>>>>> 0f77329 (update)
 
 namespace cartservice
 {
@@ -21,10 +18,7 @@ namespace cartservice
     {
         public Startup(IConfiguration configuration)
         {
-<<<<<<< HEAD
-=======
           DotEnv.Load();
->>>>>>> 0f77329 (update)
             Configuration = configuration;
         }
 
@@ -90,3 +84,4 @@ namespace cartservice
         }
     }
 }
+

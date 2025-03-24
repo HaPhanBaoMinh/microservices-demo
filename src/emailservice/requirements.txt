@@ -141,8 +141,7 @@ wrapt==1.16.0
     #   opentelemetry-instrumentation-grpc
 zipp==3.17.0
     # via importlib-metadata
+python-dotenv==1.0.1
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools
-python-dotenv==1.0.1
-

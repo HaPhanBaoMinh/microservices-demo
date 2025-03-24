@@ -8,7 +8,7 @@ services:
       - PORT=8080
       - RECOMMENDATION_SERVICE_ADDR=localhost:7777
       - PRODUCT_CATALOG_SERVICE_ADDR=localhost:3550
-      - CART_SERVICE_ADDR=localhost:8888
+      - CART_SERVICE_ADDR=localhost:7070
       - CHECKOUT_SERVICE_ADDR=localhost:9898
       - SHIPPING_SERVICE_ADDR=localhost:50052
       - PAYMENT_SERVICE_ADDR=localhost:50051
@@ -36,7 +36,6 @@ services:
     network_mode: "host"
     environment:
       - REDIS_ADDR=localhost:6379
-      - ASPNETCORE_URLS=http://localhost:8888
 
   checkoutservice:
     image: checkoutservice:latest

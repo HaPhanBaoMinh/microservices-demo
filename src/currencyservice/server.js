@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-require('dotenv').config();
+require("dotenv").config();
 const pino = require("pino");
 const logger = pino({
   name: "currencyservice-server",
@@ -46,7 +46,7 @@ registerInstrumentations({
   instrumentations: [new GrpcInstrumentation()],
 });
 
-if (process.env.ENABLE_TRACING) {
+if (process.env.ENABLE_TRACING == "1") {
   logger.info("Tracing enabled.");
   const { NodeTracerProvider } = require("@opentelemetry/sdk-trace-node");
   const { SimpleSpanProcessor } = require("@opentelemetry/sdk-trace-base");

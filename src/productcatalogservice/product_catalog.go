@@ -1,86 +1,179 @@
-// Copyright 2023 Google LLC
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+
 	pb "github.com/GoogleCloudPlatform/microservices-demo/src/productcatalogservice/genproto"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/joho/godotenv"
 	"google.golang.org/grpc/codes"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
+	"os"
 )
 
 type productCatalog struct {
 	pb.UnimplementedProductCatalogServiceServer
-	catalog pb.ListProductsResponse
+	db        *dynamodb.Client
+	tableName string
+}
+
+var extraLatency time.Duration
+
+type Money struct {
+	CurrencyCode string `dynamodbav:"currencyCode"`
+	Units        int64  `dynamodbav:"units"`
+	Nanos        int32  `dynamodbav:"nanos"`
+}
+
+type Product struct {
+	ID          string   `dynamodbav:"id"`
+	Name        string   `dynamodbav:"name"`
+	Description string   `dynamodbav:"description"`
+	Picture     string   `dynamodbav:"picture"`
+	PriceUsd    Money    `dynamodbav:"priceUsd"`
+	Categories  []string `dynamodbav:"categories"`
+}
+
+func newProductCatalog() (*productCatalog, error) {
+	_ = godotenv.Load()
+
+	if latencyStr := os.Getenv("EXTRA_LATENCY"); latencyStr != "" {
+		if latency, err := time.ParseDuration(latencyStr); err == nil {
+			extraLatency = latency
+		}
+	}
+
+	tableName := os.Getenv("DYNAMODB_TABLE_NAME")
+	localEndpoint := os.Getenv("DYNAMODB_LOCAL_ENDPOINT")
+
+	if tableName == "" {
+		return nil, fmt.Errorf("missing required environment variable: DYNAMODB_TABLE_NAME")
+	}
+
+	var cfg aws.Config
+	var err error
+
+	if localEndpoint != "" {
+		cfg, err = config.LoadDefaultConfig(context.TODO(),
+			config.WithEndpointResolver(aws.EndpointResolverFunc(func(service, region string) (aws.Endpoint, error) {
+				return aws.Endpoint{URL: localEndpoint}, nil
+			})),
+		)
+	} else {
+		cfg, err = config.LoadDefaultConfig(context.TODO())
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	return &productCatalog{
+		db:        dynamodb.NewFromConfig(cfg),
+		tableName: tableName,
+	}, nil
 }
 
 func (p *productCatalog) Check(ctx context.Context, req *healthpb.HealthCheckRequest) (*healthpb.HealthCheckResponse, error) {
 	return &healthpb.HealthCheckResponse{Status: healthpb.HealthCheckResponse_SERVING}, nil
 }
 
-func (p *productCatalog) Watch(req *healthpb.HealthCheckRequest, ws healthpb.Health_WatchServer) error {
-	return status.Errorf(codes.Unimplemented, "health check via Watch not implemented")
-}
-
-func (p *productCatalog) ListProducts(context.Context, *pb.Empty) (*pb.ListProductsResponse, error) {
+func (p *productCatalog) ListProducts(ctx context.Context, req *pb.Empty) (*pb.ListProductsResponse, error) {
 	time.Sleep(extraLatency)
-
-	return &pb.ListProductsResponse{Products: p.parseCatalog()}, nil
+	products, err := p.getProductsFromDB(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.ListProductsResponse{Products: products}, nil
 }
 
 func (p *productCatalog) GetProduct(ctx context.Context, req *pb.GetProductRequest) (*pb.Product, error) {
 	time.Sleep(extraLatency)
-
-	var found *pb.Product
-	for i := 0; i < len(p.parseCatalog()); i++ {
-		if req.Id == p.parseCatalog()[i].Id {
-			found = p.parseCatalog()[i]
-		}
-	}
-
-	if found == nil {
-		return nil, status.Errorf(codes.NotFound, "no product with ID %s", req.Id)
-	}
-	return found, nil
+	return p.getProductByID(ctx, req.Id)
 }
 
 func (p *productCatalog) SearchProducts(ctx context.Context, req *pb.SearchProductsRequest) (*pb.SearchProductsResponse, error) {
 	time.Sleep(extraLatency)
+	products, err := p.getProductsFromDB(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-	var ps []*pb.Product
-	for _, product := range p.parseCatalog() {
+	var results []*pb.Product
+	for _, product := range products {
 		if strings.Contains(strings.ToLower(product.Name), strings.ToLower(req.Query)) ||
 			strings.Contains(strings.ToLower(product.Description), strings.ToLower(req.Query)) {
-			ps = append(ps, product)
+			results = append(results, product)
 		}
 	}
-
-	return &pb.SearchProductsResponse{Results: ps}, nil
+	return &pb.SearchProductsResponse{Results: results}, nil
 }
 
-func (p *productCatalog) parseCatalog() []*pb.Product {
-	if reloadCatalog || len(p.catalog.Products) == 0 {
-		err := loadCatalog(&p.catalog)
-		if err != nil {
-			return []*pb.Product{}
-		}
+func (p *productCatalog) getProductsFromDB(ctx context.Context) ([]*pb.Product, error) {
+	out, err := p.db.Scan(ctx, &dynamodb.ScanInput{
+		TableName: aws.String(p.tableName),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan DynamoDB: %w", err)
 	}
 
-	return p.catalog.Products
+	var items []Product
+	if err := attributevalue.UnmarshalListOfMaps(out.Items, &items); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal items: %w", err)
+	}
+
+	var products []*pb.Product
+	for _, item := range items {
+		products = append(products, &pb.Product{
+			Id:          item.ID,
+			Name:        item.Name,
+			Description: item.Description,
+			Picture:     item.Picture,
+			PriceUsd:    &pb.Money{CurrencyCode: item.PriceUsd.CurrencyCode, Units: item.PriceUsd.Units, Nanos: item.PriceUsd.Nanos},
+			Categories:  item.Categories,
+		})
+	}
+	return products, nil
+}
+
+func (p *productCatalog) Watch(req *healthpb.HealthCheckRequest, ws healthpb.Health_WatchServer) error {
+	return status.Errorf(codes.Unimplemented, "health check via Watch not implemented")
+}
+
+func (p *productCatalog) getProductByID(ctx context.Context, id string) (*pb.Product, error) {
+	out, err := p.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(p.tableName),
+		Key: map[string]types.AttributeValue{
+			"id": &types.AttributeValueMemberS{Value: id},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get item: %w", err)
+	}
+
+	if out.Item == nil {
+		return nil, fmt.Errorf("product not found")
+	}
+
+	var product Product
+	if err := attributevalue.UnmarshalMap(out.Item, &product); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal product: %w", err)
+	}
+
+	return &pb.Product{
+		Id:          product.ID,
+		Name:        product.Name,
+		Description: product.Description,
+		Picture:     product.Picture,
+		PriceUsd:    &pb.Money{CurrencyCode: product.PriceUsd.CurrencyCode, Units: product.PriceUsd.Units, Nanos: product.PriceUsd.Nanos},
+		Categories:  product.Categories,
+	}, nil
 }

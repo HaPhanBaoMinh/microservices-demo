@@ -4,6 +4,8 @@ go 1.23
 
 require (
 	cloud.google.com/go/profiler v0.4.2
+	github.com/joho/godotenv v1.5.1
+	github.com/lib/pq v1.10.9
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/net v0.35.0
 	google.golang.org/grpc v1.70.0
@@ -22,7 +24,6 @@ require (
 	github.com/google/s2a-go v0.1.8 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
 	github.com/googleapis/gax-go/v2 v2.14.0 // indirect
-	github.com/joho/godotenv v1.5.1 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.54.0 // indirect
 	go.opentelemetry.io/otel v1.32.0 // indirect

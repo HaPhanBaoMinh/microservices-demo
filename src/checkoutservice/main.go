@@ -1,17 +1,3 @@
-// Copyright 2018 Google LLC
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package main
 
 import (
@@ -30,10 +16,11 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/GoogleCloudPlatform/microservices-demo/src/checkoutservice/genproto"
-	money "github.com/GoogleCloudPlatform/microservices-demo/src/checkoutservice/money"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
+	"database/sql"
 	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -47,18 +34,97 @@ const (
 
 var log *logrus.Logger
 
+var (
+	db *sql.DB
+
+	// Table names from .env
+	tableOrders         string
+	tableOrderItems     string
+	tableOrderPayments  string
+	tableOrderShipments string
+)
+
 func init() {
-	log = logrus.New()
-	log.Level = logrus.DebugLevel
-	log.Formatter = &logrus.JSONFormatter{
-		FieldMap: logrus.FieldMap{
-			logrus.FieldKeyTime:  "timestamp",
-			logrus.FieldKeyLevel: "severity",
-			logrus.FieldKeyMsg:   "message",
-		},
-		TimestampFormat: time.RFC3339Nano,
+	if err := godotenv.Load(); err != nil {
+		log.Fatalf("Error loading .env file: %v", err) // Now log is initialized
 	}
-	log.Out = os.Stdout
+
+	// Get database connection details
+	dbHost := os.Getenv("DB_HOST")
+	dbPort := os.Getenv("DB_PORT")
+	dbUser := os.Getenv("DB_USER")
+	dbPassword := os.Getenv("DB_PASSWORD")
+	dbName := os.Getenv("DB_NAME")
+
+	// Get table names from .env
+	tableOrders = os.Getenv("TABLE_ORDERS")
+	tableOrderItems = os.Getenv("TABLE_ORDER_ITEMS")
+	tableOrderPayments = os.Getenv("TABLE_ORDER_PAYMENTS")
+	tableOrderShipments = os.Getenv("TABLE_ORDER_SHIPMENTS")
+
+	// Create connection string
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		dbHost, dbPort, dbUser, dbPassword, dbName)
+
+	// Connect to database
+	var err error
+	db, err = sql.Open("postgres", connStr)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+
+	// Test the connection
+	if err = db.Ping(); err != nil {
+		log.Fatalf("Database connection error: %v", err)
+	}
+
+	// Create tables if they do not exist
+	createTables()
+}
+
+func createTables() {
+	createOrdersTable := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`, tableOrders)
+
+	createOrderItemsTable := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
+			id SERIAL PRIMARY KEY,
+			order_id UUID REFERENCES %s(id) ON DELETE CASCADE,
+			product_id TEXT NOT NULL,
+			product_name TEXT NOT NULL,
+			unit_price NUMERIC(10,2) NOT NULL,
+			quantity INT NOT NULL CHECK (quantity > 0),
+			subtotal NUMERIC(10,2) GENERATED ALWAYS AS (unit_price * quantity) STORED
+		)`, tableOrderItems, tableOrders)
+
+	createOrderPaymentsTable := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
+			order_id UUID PRIMARY KEY REFERENCES %s(id) ON DELETE CASCADE,
+			transaction_id UUID NOT NULL,
+			status VARCHAR(20) DEFAULT 'PENDING',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`, tableOrderPayments, tableOrders)
+
+	createOrderShipmentsTable := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
+			order_id UUID PRIMARY KEY REFERENCES %s(id) ON DELETE CASCADE,
+			tracking_id TEXT NOT NULL,
+			status VARCHAR(20) DEFAULT 'PROCESSING',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`, tableOrderShipments, tableOrders)
+
+	// Execute table creation queries
+	queries := []string{createOrdersTable, createOrderItemsTable, createOrderPaymentsTable, createOrderShipmentsTable}
+	for _, query := range queries {
+		if _, err := db.Exec(query); err != nil {
+			log.Fatalf("Error creating table: %v", err)
+		}
+	}
 }
 
 type checkoutService struct {
@@ -234,52 +300,87 @@ func (cs *checkoutService) Watch(req *healthpb.HealthCheckRequest, ws healthpb.H
 func (cs *checkoutService) PlaceOrder(ctx context.Context, req *pb.PlaceOrderRequest) (*pb.PlaceOrderResponse, error) {
 	log.Infof("[PlaceOrder] user_id=%q user_currency=%q", req.UserId, req.UserCurrency)
 
+	// Generate a new order UUID
 	orderID, err := uuid.NewUUID()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to generate order uuid")
 	}
 
-	prep, err := cs.prepareOrderItemsAndShippingQuoteFromCart(ctx, req.UserId, req.UserCurrency, req.Address)
+	// Save order with status "PENDING"
+	_, err = db.Exec(fmt.Sprintf(`INSERT INTO %s (order_id, status, created_at, updated_at) VALUES ($1, 'PENDING', $2, $3)`, tableOrders),
+		orderID.String(), time.Now(), time.Now(),
+	)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		log.Errorf("failed to insert order: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to save order")
 	}
 
-	total := pb.Money{CurrencyCode: req.UserCurrency,
-		Units: 0,
-		Nanos: 0}
-	total = money.Must(money.Sum(total, *prep.shippingCostLocalized))
-	for _, it := range prep.orderItems {
-		multPrice := money.MultiplySlow(*it.Cost, uint32(it.GetItem().GetQuantity()))
-		total = money.Must(money.Sum(total, multPrice))
+	// Save order payment with status "PENDING"
+	_, err = db.Exec(fmt.Sprintf(`INSERT INTO %s (order_id, status) VALUES ($1, 'PENDING')`, tableOrderPayments),
+		orderID.String(),
+	)
+	if err != nil {
+		log.Errorf("failed to insert order payment: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to save order payment")
 	}
 
-	txID, err := cs.chargeCard(ctx, &total, req.CreditCard)
+	// Process payment
+	txID, err := cs.chargeCard(ctx, &pb.Money{CurrencyCode: req.UserCurrency}, req.CreditCard)
 	if err != nil {
+		// Update order payment to "FAILED"
+		_, _ = db.Exec(fmt.Sprintf(`UPDATE %s SET status = 'FAILED' WHERE order_id = $1`, tableOrderPayments),
+			orderID.String(),
+		)
+
+		// Update order status to "FAILED"
+		_, _ = db.Exec(fmt.Sprintf(`UPDATE %s SET status = 'FAILED', updated_at = $1 WHERE order_id = $2`, tableOrders),
+			time.Now(), orderID.String(),
+		)
+
 		return nil, status.Errorf(codes.Internal, "failed to charge card: %+v", err)
 	}
-	log.Infof("payment went through (transaction_id: %s)", txID)
+	log.Infof("payment successful (transaction_id: %s)", txID)
 
-	shippingTrackingID, err := cs.shipOrder(ctx, req.Address, prep.cartItems)
+	// Update payment status to "SUCCESS"
+	_, err = db.Exec(fmt.Sprintf(`UPDATE %s SET transaction_id = $1, status = 'SUCCESS' WHERE order_id = $2`, tableOrderPayments),
+		txID, orderID.String(),
+	)
+	if err != nil {
+		log.Errorf("failed to update payment status to SUCCESS: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to update payment record")
+	}
+
+	// Update order status to "PROCESSING"
+	_, err = db.Exec(fmt.Sprintf(`UPDATE %s SET status = 'PROCESSING', updated_at = $1 WHERE order_id = $2`, tableOrders),
+		time.Now(), orderID.String(),
+	)
+	if err != nil {
+		log.Errorf("failed to update order status to PROCESSING: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to update order")
+	}
+
+	// Ship order
+	shippingTrackingID, err := cs.shipOrder(ctx, req.Address, nil)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "shipping error: %+v", err)
 	}
 
-	_ = cs.emptyUserCart(ctx, req.UserId)
-
-	orderResult := &pb.OrderResult{
-		OrderId:            orderID.String(),
-		ShippingTrackingId: shippingTrackingID,
-		ShippingCost:       prep.shippingCostLocalized,
-		ShippingAddress:    req.Address,
-		Items:              prep.orderItems,
+	// Save shipping details
+	_, err = db.Exec(fmt.Sprintf(`INSERT INTO %s (order_id, tracking_id, status) VALUES ($1, $2, 'SHIPPED')`, tableOrderShipments),
+		orderID.String(), shippingTrackingID,
+	)
+	if err != nil {
+		log.Errorf("failed to insert order shipment: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to save shipment info")
 	}
 
-	if err := cs.sendOrderConfirmation(ctx, req.Email, orderResult); err != nil {
-		log.Warnf("failed to send order confirmation to %q: %+v", req.Email, err)
-	} else {
-		log.Infof("order confirmation email sent to %q", req.Email)
+	// Return response
+	resp := &pb.PlaceOrderResponse{
+		Order: &pb.OrderResult{
+			OrderId:            orderID.String(),
+			ShippingTrackingId: shippingTrackingID,
+		},
 	}
-	resp := &pb.PlaceOrderResponse{Order: orderResult}
 	return resp, nil
 }
 

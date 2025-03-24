@@ -1,23 +1,34 @@
-# Shipping Service
+# paymentservice
 
-The Shipping service provides price quote, tracking IDs, and the impression of order fulfillment & shipping processes.
+## Description
 
-## Local
+- This is a simple payment service that allows users to make payments and view their payment history.
 
-Run the following command to restore dependencies to `vendor/` directory:
+## Prepare DB
 
-    dep ensure --vendor-only
+- Create a table in RDS
 
-## Build
-
-From `src/shippingservice`, run:
-
-```
-docker build ./
+```sql
+psql -h localhost -p 5432 -U postgres -d final
 ```
 
-## Test
-
+```sql
+CREATE TABLE tracking_info (
+    id SERIAL PRIMARY KEY,
+    tracking_id TEXT NOT NULL,
+    address TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 ```
-go test .
+
+## Postgres
+
+- Run the following command to start the postgres container
+
+```bash
+docker run -e POSTGRES_DB=final \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -p 5432:5432 \
+  -d postgres
 ```

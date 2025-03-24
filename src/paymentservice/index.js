@@ -13,12 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-require('dotenv').config();
 
-"use strict";
-
+require("dotenv").config();
 const logger = require("./logger");
-
 
 if (process.env.DISABLE_PROFILER) {
   logger.info("Profiler disabled.");

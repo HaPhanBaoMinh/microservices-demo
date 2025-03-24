@@ -17,8 +17,7 @@
 import logging
 import sys
 from pythonjsonlogger import jsonlogger
-from dotenv import load_dotenv
-load_dotenv()
+
 # TODO(yoshifumi) this class is duplicated since other Python services are
 # not sharing the modules for logging.
 class CustomJsonFormatter(jsonlogger.JsonFormatter):
