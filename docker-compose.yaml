@@ -5,7 +5,6 @@ networks:
 
 services:
 
-
   dynamodb:
     image: amazon/dynamodb-local
     networks:
@@ -63,6 +62,8 @@ services:
       - mynetwork
     environment:
       - REDIS_ADDR=redis-server:6379
+    depends_on:
+      - redis-server
 
   checkoutservice:
     build: ./src/checkoutservice
@@ -123,6 +124,8 @@ services:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=final
       - POSTGRES_TABLE=payment 
+    depends_on:
+      - postgres
 
   productcatalogservice:
     build: ./src/productcatalogservice
@@ -137,6 +140,8 @@ services:
       - AWS_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=dummy
       - AWS_SECRET_ACCESS_KEY=dummy 
+    depends_on:
+      - dynamodb
 
   recommendationservice:
     build: ./src/recommendationservice
@@ -162,3 +167,5 @@ services:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=final
       - POSTGRES_TABLE=tracking 
+    depends_on:
+      - postgres
